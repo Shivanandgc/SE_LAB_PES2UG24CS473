@@ -1,119 +1,78 @@
-"""Hypothesis fuzz tests for highway_toll.py."""
-import math
-
+"""Hypothesis tests for all three highway toll input functions."""
 import pytest
 from hypothesis import given, strategies as st
 
-from highway_toll import pass_advice, toll_charge, toll_for
+from highway_toll import axle_class, parse_plate, trip_cost
 
 
-@given(
-    axles=st.integers(min_value=1, max_value=100),
-    is_peak=st.booleans(),
-    has_fastag=st.booleans(),
-)
-def test_toll_for_valid_inputs_is_finite_and_non_negative(axles, is_peak, has_fastag):
-    result = toll_for(axles, is_peak, has_fastag)
-    assert isinstance(result, float)
-    assert math.isfinite(result)
-    assert result >= 0
-
-
-@given(
-    axles=st.integers(min_value=1, max_value=100),
-    is_peak=st.booleans(),
-    has_fastag=st.booleans(),
-)
-def test_toll_for_follows_rate_and_discount_rules(axles, is_peak, has_fastag):
-    expected = {2: 100, 3: 150, 4: 250}.get(axles, 400)
-    if is_peak:
-        expected *= 1.25
-    if has_fastag:
-        expected *= 0.9 if axles == 2 else 0.95
-    assert toll_for(axles, is_peak, has_fastag) == round(expected, 2)
-
-
-@given(value=st.one_of(st.none(), st.text(), st.floats(allow_nan=True, allow_infinity=True), st.booleans()))
-def test_toll_for_rejects_malformed_axle_values(value):
-    if isinstance(value, str):
-        try:
-            parsed = int(value)
-            valid = parsed >= 1 and str(parsed) == value.strip()
-        except ValueError:
-            valid = False
-    else:
-        valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 1 and float(value).is_integer()
-    if valid:
-        assert toll_for(value, False, False) >= 0
-    else:
-        with pytest.raises(ValueError):
-            toll_for(value, False, False)
-
-
-@given(value=st.one_of(st.none(), st.text(), st.integers(), st.lists(st.booleans(), max_size=3)))
-def test_toll_for_rejects_non_boolean_flags(value):
-    if isinstance(value, bool):
+@given(st.text())
+def test_parse_plate_accepts_only_valid_structure_or_reports_validation_error(value):
+    try:
+        result = parse_plate(value)
+    except ValueError:
         return
+    assert isinstance(result, tuple) and len(result) == 3
+    assert len(result[0]) == 2 and result[0].isalpha()
+    assert isinstance(result[1], int) and 1 <= result[1] <= 99
+    assert isinstance(result[2], int) and 1 <= result[2] <= 9999
+
+
+@given(
+    state=st.text(alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ", min_size=2, max_size=2),
+    district=st.integers(min_value=1, max_value=99),
+    series=st.text(alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ", min_size=1, max_size=3),
+    number=st.integers(min_value=1, max_value=9999),
+)
+def test_parse_plate_valid_plates(state, district, series, number):
+    plate = f"{state.lower()}-{district:02d}-{series.lower()}-{number:04d}"
+    assert parse_plate(plate) == (state, district, number)
+
+
+@given(value=st.one_of(st.none(), st.integers(), st.lists(st.text())))
+def test_parse_plate_rejects_non_string_inputs(value):
     with pytest.raises(ValueError):
-        toll_for(2, value, False)
-    with pytest.raises(ValueError):
-        toll_for(2, False, value)
+        parse_plate(value)
 
 
-@given(vehicle=st.sampled_from(["ambulance", "fire_engine", " AMBULANCE ", "Fire_Engine"]))
-def test_emergency_vehicles_are_exempt(vehicle):
-    assert toll_charge(vehicle, None, "invalid", object()) == 0
-
-
-@given(
-    vehicle=st.text(min_size=1).filter(lambda value: value.strip().lower() not in {"ambulance", "fire_engine"}),
-    axles=st.integers(min_value=1, max_value=100),
-    is_peak=st.booleans(),
-    has_fastag=st.booleans(),
-)
-def test_non_exempt_vehicle_uses_toll_for(vehicle, axles, is_peak, has_fastag):
-    assert toll_charge(vehicle, axles, is_peak, has_fastag) == toll_for(axles, is_peak, has_fastag)
-
-
-@given(
-    trips=st.lists(st.tuples(st.booleans(), st.booleans()), max_size=30),
-    axles=st.integers(min_value=1, max_value=100),
-)
-def test_pass_advice_returns_a_valid_recommendation(trips, axles):
-    assert pass_advice(trips, axles, 10000) in {"buy_pass", "either", "pay_per_trip"}
-
-
-@given(
-    trips=st.lists(st.tuples(st.booleans(), st.booleans()), max_size=20),
-    axles=st.integers(min_value=1, max_value=100),
-)
-def test_pass_advice_compares_pass_price_with_trip_total(trips, axles):
-    total = sum(toll_for(axles, peak, fastag) for peak, fastag in trips)
-    assert pass_advice(trips, axles, total) == "either"
-    assert pass_advice(trips, axles, total + 1) == "pay_per_trip"
-    if total > 0:
-        assert pass_advice(trips, axles, total - 1) == "buy_pass"
-
-
-@given(value=st.one_of(st.none(), st.text(), st.floats(allow_nan=True, allow_infinity=True), st.booleans()))
-def test_pass_advice_rejects_invalid_pass_prices(value):
-    valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
-    if valid:
-        assert pass_advice([], 2, value) == "either"
-    else:
-        with pytest.raises(ValueError):
-            pass_advice([], 2, value)
-
-
-@given(trips=st.one_of(st.none(), st.text(), st.integers(), st.dictionaries(st.text(), st.integers())))
-def test_pass_advice_rejects_non_iterable_or_string_trips(trips):
-    if trips is not None and not isinstance(trips, (str, bytes)) and hasattr(trips, "__iter__"):
+@given(st.text())
+def test_trip_cost_never_returns_negative_for_valid_or_invalid_text(value):
+    try:
+        result = trip_cost(value)
+    except ValueError:
         return
-    with pytest.raises(ValueError):
-        pass_advice(trips, 2, 100)
+    assert isinstance(result, int) and result >= 0
 
 
-@given(trip=st.one_of(st.text(), st.integers(), st.lists(st.integers(), max_size=4)))
-def test_pass_advice_rejects_malformed_trip_items(trip):
+@given(count=st.integers(min_value=0, max_value=100000), rate=st.integers(min_value=0, max_value=100000))
+def test_trip_cost_calculates_valid_values(count, rate):
+    assert trip_cost(f"{count}x{rate}") == count * rate
+
+
+@given(value=st.one_of(st.none(), st.integers(), st.lists(st.integers()), st.booleans()))
+def test_trip_cost_rejects_non_string_inputs(value):
     with pytest.raises(ValueError):
-        pass_advice([trip], 2, 100)
+        trip_cost(value)
+
+
+@given(value=st.one_of(st.none(), st.floats(allow_nan=True, allow_infinity=True), st.booleans(), st.lists(st.integers())))
+def test_axle_class_rejects_invalid_types(value):
+    with pytest.raises(ValueError):
+        axle_class(value)
+
+
+@given(axles=st.integers(min_value=2, max_value=1000))
+def test_axle_class_returns_one_of_three_classes(axles):
+    result = axle_class(axles)
+    assert result in {"car", "truck", "heavy"}
+
+
+@given(axles=st.integers(min_value=2, max_value=1000))
+def test_axle_class_matches_classification_rules(axles):
+    expected = "car" if axles == 2 else "truck" if axles <= 4 else "heavy"
+    assert axle_class(axles) == expected
+
+
+@given(axles=st.integers(min_value=-1000, max_value=1))
+def test_axle_class_rejects_axle_counts_below_two(axles):
+    with pytest.raises(ValueError):
+        axle_class(axles)
