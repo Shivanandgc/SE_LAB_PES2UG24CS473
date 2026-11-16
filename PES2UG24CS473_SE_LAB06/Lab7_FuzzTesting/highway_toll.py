@@ -1,102 +1,81 @@
-"""Highway toll utilities used in the SE Lab 7 fuzz-testing exercise."""
-
-BASE_TOLL = {2: 100, 3: 150, 4: 250}
-EXEMPT = ("ambulance", "fire_engine")
+"""Validated highway toll input utilities for Lab 7 fuzz testing."""
 
 
-def _validate_axles(axles):
-    """Validate axle count as a positive whole number."""
+def parse_plate(plate):
+    """Parse a plate like KA-05-AB-1234.
+
+    Returns (state, district, number). Raises ValueError for malformed plates.
+    """
+    if not isinstance(plate, str):
+        raise ValueError("plate must be a string")
+    parts = plate.strip().upper().split("-")
+    if len(parts) != 4:
+        raise ValueError("plate must have four hyphen-separated parts")
+    state, district_text, series, number_text = parts
+    if len(state) != 2 or not state.isalpha():
+        raise ValueError("state must contain exactly two letters")
+    if not district_text.isdigit() or not 1 <= int(district_text) <= 99:
+        raise ValueError("district must be a number from 1 to 99")
+    if not series.isalpha() or not 1 <= len(series) <= 3:
+        raise ValueError("series must contain 1 to 3 letters")
+    if not number_text.isdigit() or not 1 <= int(number_text) <= 9999:
+        raise ValueError("vehicle number must be from 1 to 9999")
+    return state, int(district_text), int(number_text)
+
+
+def trip_cost(text):
+    """Calculate count x rate, rejecting malformed or negative values."""
+    if not isinstance(text, str):
+        raise ValueError("trip cost must be supplied as text such as '3x150'")
+    parts = text.lower().split("x")
+    if len(parts) != 2:
+        raise ValueError("trip cost must contain exactly one 'x'")
+    count_text, rate_text = (part.strip() for part in parts)
+    if not count_text.isdigit() or not rate_text.isdigit():
+        raise ValueError("trip count and rate must be non-negative integers")
+    return int(count_text) * int(rate_text)
+
+
+def axle_class(axles):
+    """Classify valid axle counts: 2 = car, 3-4 = truck, 5+ = heavy."""
     if isinstance(axles, bool):
-        raise ValueError("axles must be a positive integer")
-    try:
-        value = int(axles)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError("axles must be a positive integer") from exc
-    if isinstance(axles, float) and not axles.is_integer():
-        raise ValueError("axles must be a whole number")
-    if isinstance(axles, str) and str(value) != axles.strip():
-        raise ValueError("axles must be a whole number")
-    if value < 1:
-        raise ValueError("axles must be a positive integer")
-    return value
-
-
-def _validate_boolean(value, name):
-    if not isinstance(value, bool):
-        raise ValueError(f"{name} must be a boolean")
-    return value
-
-
-def toll_for(axles, is_peak, has_fastag):
-    """Calculate toll from axle count, peak status, and FASTag status."""
-    axles = _validate_axles(axles)
-    is_peak = _validate_boolean(is_peak, "is_peak")
-    has_fastag = _validate_boolean(has_fastag, "has_fastag")
-
-    base = BASE_TOLL.get(axles, 400)
-    if is_peak:
-        base *= 1.25
-    if has_fastag:
-        base *= 0.9 if axles == 2 else 0.95
-    return round(base, 2)
-
-
-def toll_charge(vehicle, axles, is_peak, has_fastag):
-    """Return zero for emergency vehicles; otherwise calculate the toll."""
-    if not isinstance(vehicle, str) or not vehicle.strip():
-        raise ValueError("vehicle must be a non-empty string")
-    if vehicle.strip().lower() in EXEMPT:
-        return 0
-    return toll_for(axles, is_peak, has_fastag)
-
-
-def pass_advice(trips, axles, pass_price):
-    """Recommend a pass when its price is below the sum of trip tolls."""
-    axles = _validate_axles(axles)
-    if isinstance(pass_price, (bool, str, bytes)):
-        raise ValueError("pass_price must be a finite non-negative number")
-    try:
-        pass_price = float(pass_price)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError("pass_price must be a finite non-negative number") from exc
-    if not (pass_price >= 0 and pass_price < float("inf")):
-        raise ValueError("pass_price must be a finite non-negative number")
-
-    if trips is None or isinstance(trips, (str, bytes)):
-        raise ValueError("trips must be an iterable of trip pairs")
-    try:
-        iterator = iter(trips)
-    except TypeError as exc:
-        raise ValueError("trips must be iterable") from exc
-
-    total_cost = 0.0
-    for trip in iterator:
-        if isinstance(trip, (str, bytes)):
-            raise ValueError("each trip must be a pair of booleans")
-        try:
-            is_peak, has_fastag = trip
-        except (TypeError, ValueError) as exc:
-            raise ValueError("each trip must contain exactly two values") from exc
-        total_cost += toll_for(axles, is_peak, has_fastag)
-
-    if total_cost > pass_price:
-        return "buy_pass"
-    if total_cost == pass_price:
-        return "either"
-    return "pay_per_trip"
+        raise ValueError("axle count must be an integer")
+    if isinstance(axles, int):
+        n = axles
+    elif isinstance(axles, str) and axles.strip().isdigit():
+        n = int(axles.strip())
+    else:
+        raise ValueError("axle count must be a positive whole number")
+    if n < 2:
+        raise ValueError("axle count must be at least 2")
+    if n == 2:
+        return "car"
+    if n <= 4:
+        return "truck"
+    return "heavy"
 
 
 def main():
-    """Small deterministic demonstration for the lab's initial/final run."""
-    print("==== Highway Toll Calculator ====")
-    examples = [
-        ("Car, regular, FASTag", toll_for(2, False, True)),
-        ("3-axle truck, peak, FASTag", toll_for(3, True, True)),
-        ("Ambulance exemption", toll_charge("ambulance", 2, False, False)),
-        ("Pass advice", pass_advice([(False, False), (True, True)], 2, 250)),
-    ]
-    for label, result in examples:
-        print(f"{label}: {result}")
+    print("==== Running parse_plate ====")
+    try:
+        user_input = input("Enter a plate (e.g. KA-05-AB-1234): ")
+        print("State, District and Number:", parse_plate(user_input))
+    except ValueError as exc:
+        print("Invalid plate:", exc)
+
+    print("\n==== Running trip_cost ====")
+    try:
+        user_input = input("Enter trips x rate (e.g. 3x150): ")
+        print("Trip Cost:", trip_cost(user_input))
+    except ValueError as exc:
+        print("Invalid trip cost:", exc)
+
+    print("\n==== Running axle_class ====")
+    try:
+        user_input = input("Enter an axle count (e.g. 3): ")
+        print("Vehicle Class:", axle_class(user_input))
+    except ValueError as exc:
+        print("Invalid axle count:", exc)
 
 
 if __name__ == "__main__":
